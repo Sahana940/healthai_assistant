@@ -2,168 +2,137 @@ import streamlit as st
 from huggingface_hub import InferenceClient
 from config import config
 import time
-from dotenv import load_dotenv
-import os
+import traceback
 
-load_dotenv()
-HF_TOKEN = os.getenv("HUGGINGFACE_TOKEN")
-MODEL_NAME = os.getenv("MODEL_NAME")
-
-client = InferenceClient(
-    model=MODEL_NAME,
-    token=HF_TOKEN
-)
-
-def generate_response(user_input):
-    response = client.text_generation(
-        user_input,
-        max_new_tokens=256
-    )
-    return response
 
 class GraniteHealthAI:
     """IBM Granite AI Model Handler for Healthcare"""
-    
+
     def __init__(self):
         self.client = None
-        self.model_name = config.MODEL_NAME
+        self.model_name = config.MODEL_NAME or "Qwen/Qwen2.5-7B-Instruct"
         self._initialize_client()
-    
+
     def _initialize_client(self):
-        """Initialize Hugging Face Inference Client"""
         try:
-            if config.HUGGINGFACE_TOKEN:
-                self.client = InferenceClient(
-                    model=self.model_name,
-                    token=config.HUGGINGFACE_TOKEN
-                )
-            else:
-                st.error("⚠️ Hugging Face token not found. Please add it to .env file")
+            if not config.HUGGINGFACE_TOKEN:
+                st.error("❌ Hugging Face Token missing in .env")
+                return
+
+            self.client = InferenceClient(
+                model=self.model_name,
+                token=config.HUGGINGFACE_TOKEN
+            )
+            st.success(f"✅ Model Ready: {self.model_name}")
+
         except Exception as e:
-            st.error(f"Failed to initialize AI model: {str(e)}")
-    
+            st.error(f"🔥 AI Initialization Failed: {str(e)}")
+            st.code(traceback.format_exc())
+
     def generate_response(self, prompt: str, max_tokens: int = 512) -> str:
-        """Generate AI response using Granite model"""
+        """Chat response using Hugging Face Granite model"""
         try:
             if not self.client:
-                return "AI model not initialized. Please check your Hugging Face token."
-            
-            response = self.client.text_generation(
-                prompt,
-                max_new_tokens=max_tokens,
-                temperature=config.TEMPERATURE,
-                top_p=config.TOP_P,
-                repetition_penalty=1.1,
-                return_full_text=False
+                return "❌ Model not initialized. Verify API token/model name."
+
+            messages = [
+                {"role": "system", "content": "You are a professional healthcare assistant."},
+                {"role": "user", "content": prompt}
+            ]
+
+            response = self.client.chat_completion(
+                messages=messages,
+                max_tokens=max_tokens,
+                temperature=float(config.TEMPERATURE),
+                top_p=float(config.TOP_P),
             )
-            
-            return response.strip()
-            
+
+            return response.choices[0].message["content"].strip()
+
         except Exception as e:
-            return f"Error generating response: {str(e)}"
-    
+            st.error(f"⚠️ Error generating response:\n{e}")
+            st.code(traceback.format_exc())
+            return f"Error generating response: {e}"
+
     def analyze_symptoms(self, symptoms: list, patient_data: dict = None) -> dict:
-        """Analyze symptoms and predict potential conditions"""
-        
         symptoms_text = ", ".join(symptoms)
-        
-        prompt = f"""You are a medical AI assistant. Analyze the following symptoms and provide a structured medical assessment.
+        prompt = f"""
+Analyze symptoms and provide information:
+
+✅ Likely medical conditions (Top 3-5)
+✅ Severity level (Low/Moderate/High)
+✅ Suggested first-aid and precautions
+✅ When to seek urgent care
 
 Symptoms: {symptoms_text}
-
-Provide your analysis in the following format:
-1. Possible Conditions (list 3-4 most likely conditions)
-2. Severity Assessment (Low/Moderate/High)
-3. Recommended Actions
-4. When to Seek Immediate Care
-
-Keep your response professional, clear, and concise. Use bullet points where appropriate."""
-
+"""
         if patient_data:
-            prompt += f"\n\nPatient Information:\nAge: {patient_data.get('age', 'N/A')}\nGender: {patient_data.get('gender', 'N/A')}"
-        
-        response = self.generate_response(prompt, max_tokens=600)
-        
+            prompt += f"\nPatient: Age {patient_data.get('age')}, Gender: {patient_data.get('gender')}"
+
         return {
-            "analysis": response,
+            "analysis": self.generate_response(prompt, max_tokens=700),
             "symptoms": symptoms,
             "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")
         }
-    
+
     def generate_treatment_plan(self, condition: str, patient_data: dict = None) -> dict:
-        """Generate personalized treatment plan"""
-        
-        prompt = f"""You are a medical AI assistant. Create a comprehensive treatment plan for: {condition}
+        prompt = f"""
+Provide a medical treatment plan for: {condition}
 
-Provide a structured treatment plan including:
-1. Medications and Dosages
-2. Lifestyle Modifications
-3. Dietary Recommendations
-4. Exercise Guidelines
-5. Monitoring Requirements
-6. Follow-up Schedule
-7. Warning Signs to Watch For
+Include:
 
-Make recommendations evidence-based and patient-friendly."""
-
+✅ Medication suggestions (general OTC, if applicable)
+✅ Diet and lifestyle recommendations
+✅ Follow-up advice
+✅ Warning symptoms to monitor
+"""
         if patient_data:
-            prompt += f"\n\nPatient Profile:\nAge: {patient_data.get('age', 'N/A')}\nGender: {patient_data.get('gender', 'N/A')}\nExisting Conditions: {patient_data.get('conditions', 'None')}"
-        
-        response = self.generate_response(prompt, max_tokens=800)
-        
+            prompt += f"\nPatient: Age {patient_data.get('age')} Gender: {patient_data.get('gender')}"
+
         return {
-            "plan": response,
+            "plan": self.generate_response(prompt, max_tokens=700),
             "condition": condition,
             "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")
         }
-    
-    def chat_response(self, user_message: str, chat_history: list = None) -> str:
-        """Generate conversational health advice"""
-        
-        context = ""
-        if chat_history:
-            context = "\n".join([f"User: {msg['user']}\nAssistant: {msg['assistant']}" 
-                               for msg in chat_history[-3:]])  # Last 3 exchanges
-        
-        prompt = f"""You are a helpful medical AI assistant. Provide accurate, empathetic health information.
 
-{context}
+    def chat_response(self, user_message: str, chat_history: list = None) -> str:
+        history = ""
+        if chat_history:
+            history = "\n".join(
+                [f"User: {msg['user']}\nAssistant: {msg['assistant']}"
+                 for msg in chat_history[-3:]]
+            )
+
+        prompt = f"""
+{history}
 
 User: {user_message}
-Assistant:"""
-        
-        return self.generate_response(prompt, max_tokens=400)
-    
-    def analyze_health_trends(self, metrics_data: dict) -> str:
-        """Analyze health metrics and provide insights"""
-        
-        prompt = f"""You are a medical data analyst. Analyze the following health metrics and provide insights:
+"""
+        return self.generate_response(prompt, max_tokens=450)
 
-Health Metrics Summary:
+    def analyze_health_trends(self, metrics_data: dict) -> str:
+        prompt = f"""
+Analyze these health metrics:
 {self._format_metrics(metrics_data)}
 
 Provide:
-1. Key Observations
-2. Concerning Trends (if any)
-3. Positive Trends
-4. Recommendations for Improvement
 
-Be specific and actionable."""
-        
-        return self.generate_response(prompt, max_tokens=500)
-    
+✅ Positive health trends
+✅ Concerning health risks
+✅ Actionable health improvement suggestions
+"""
+        return self.generate_response(prompt, max_tokens=550)
+
     def _format_metrics(self, metrics: dict) -> str:
-        """Format metrics for prompt"""
         formatted = []
         for key, value in metrics.items():
-            if isinstance(value, list):
-                formatted.append(f"{key}: Average {sum(value)/len(value):.1f}, Range {min(value)}-{max(value)}")
+            if isinstance(value, list) and value:
+                formatted.append(f"{key}: Avg {sum(value)/len(value):.1f} | Range {min(value)}–{max(value)}")
             else:
                 formatted.append(f"{key}: {value}")
         return "\n".join(formatted)
 
-# Initialize model (singleton pattern)
+
 @st.cache_resource
 def get_ai_model():
-    """Get or create AI model instance"""
     return GraniteHealthAI()
