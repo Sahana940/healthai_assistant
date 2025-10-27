@@ -254,5 +254,3 @@ For issues and questions:
   - Health analytics
 
 ---
-
-**Made with ❤️ using IBM Granite AI**
