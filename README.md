@@ -70,7 +70,7 @@ pip install -r requirements.txt
 Create a `.env` file in the root directory:
 ```bash
 HUGGINGFACE_TOKEN=your_token_here
-MODEL_NAME=ibm-granite/granite-3b-code-instruct
+MODEL_NAME=Qwen/Qwen2.5-7B-Instruct
 APP_TITLE=HealthAI: Intelligent Healthcare Assistant
 ```
 
